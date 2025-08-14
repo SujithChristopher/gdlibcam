@@ -72,9 +72,9 @@ install_system_deps() {
     print_success "System dependencies installed"
 }
 
-# Install OpenCV
+# Install OpenCV using the tested method from opencv_installation.txt
 install_opencv() {
-    print_status "Installing OpenCV ${OPENCV_VERSION}..."
+    print_status "Installing OpenCV using proven Raspberry Pi method..."
     
     # Check if OpenCV is already installed
     if pkg-config --exists opencv4; then
@@ -83,43 +83,52 @@ install_opencv() {
         return 0
     fi
     
-    mkdir -p "$TEMP_DIR"
-    cd "$TEMP_DIR"
+    # Install OpenCV dependencies as per opencv_installation.txt
+    print_status "Installing OpenCV dependencies..."
+    sudo apt install -y \
+        build-essential cmake git libgtk-3-dev pkg-config \
+        libavcodec-dev libavformat-dev libswscale-dev libv4l-dev \
+        libxvidcore-dev libx264-dev openexr libatlas-base-dev \
+        libopenexr-dev libgstreamer-plugins-base1.0-dev \
+        libgstreamer1.0-dev python3-dev python3-numpy \
+        libtbbmalloc2 libtbb-dev libjpeg-dev libpng-dev \
+        libtiff-dev libdc1394-dev gfortran
     
-    # Download OpenCV
-    print_status "Downloading OpenCV source..."
-    wget -q -O opencv.zip "https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.zip"
-    wget -q -O opencv_contrib.zip "https://github.com/opencv/opencv_contrib/archive/${OPENCV_VERSION}.zip"
+    # Create opencv_build directory and clone repos
+    print_status "Cloning OpenCV repositories..."
+    mkdir -p ~/opencv_build && cd ~/opencv_build
     
-    unzip -q opencv.zip
-    unzip -q opencv_contrib.zip
+    # Clone latest OpenCV (not a specific version to get the most recent)
+    git clone https://github.com/opencv/opencv.git
+    git clone https://github.com/opencv/opencv_contrib.git
     
-    cd "opencv-${OPENCV_VERSION}"
-    mkdir -p build && cd build
+    # Create build directory and configure
+    mkdir -p ~/opencv_build/opencv/build && cd ~/opencv_build/opencv/build
     
-    print_status "Configuring OpenCV build (this may take a while)..."
+    print_status "Configuring OpenCV build (using tested Raspberry Pi settings)..."
     cmake \
         -D CMAKE_BUILD_TYPE=Release \
         -D CMAKE_INSTALL_PREFIX=/usr/local \
-        -D OPENCV_EXTRA_MODULES_PATH="../opencv_contrib-${OPENCV_VERSION}/modules" \
-        -D ENABLE_NEON=ON \
-        -D ENABLE_VFPV3=ON \
-        -D BUILD_TESTS=OFF \
-        -D BUILD_PERF_TESTS=OFF \
-        -D BUILD_EXAMPLES=OFF \
-        -D INSTALL_PYTHON_EXAMPLES=OFF \
-        -D OPENCV_ENABLE_NONFREE=ON \
-        -D CMAKE_SHARED_LINKER_FLAGS=-latomic \
+        -D INSTALL_C_EXAMPLES=ON \
+        -D INSTALL_PYTHON_EXAMPLES=ON \
+        -D OPENCV_GENERATE_PKGCONFIG=ON \
+        -D BUILD_EXAMPLES=ON \
+        -D OPENCV_EXTRA_MODULES_PATH=~/opencv_build/opencv_contrib/modules \
         ..
     
-    print_status "Building OpenCV (this will take 30-60 minutes)..."
-    make -j$(nproc)
+    print_status "Building OpenCV (this will take 45-90 minutes on Raspberry Pi 5)..."
+    make -j3  # Use 3 cores as per the original method
     
     print_status "Installing OpenCV..."
     sudo make install
-    sudo ldconfig
     
-    print_success "OpenCV installed successfully"
+    # Verify installation
+    OPENCV_VERSION=$(pkg-config --modversion opencv4)
+    print_success "OpenCV ${OPENCV_VERSION} installed successfully"
+    
+    # Clean up build directory to save space
+    print_status "Cleaning up build files..."
+    rm -rf ~/opencv_build
 }
 
 # Download and install Godot
