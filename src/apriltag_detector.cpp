@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <thread>
 #include <mutex>
+#include <array>
 
 using namespace godot;
 using namespace libcamera;
@@ -21,6 +22,12 @@ static std::mutex detection_mutex;
 
 // Static instance pointer
 AprilTagDetector* AprilTagDetector::current_instance = nullptr;
+
+// Frame skipping counter
+std::atomic<int> AprilTagDetector::frame_skip_counter(0);
+
+// Video frame skipping counter
+std::atomic<int> AprilTagDetector::video_frame_counter(0);
 
 void AprilTagDetector::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_camera_parameters", "json_path"), &AprilTagDetector::load_camera_parameters);
@@ -33,9 +40,12 @@ void AprilTagDetector::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_marker_size", "size"), &AprilTagDetector::set_marker_size);
 	ClassDB::bind_method(D_METHOD("get_camera_matrix"), &AprilTagDetector::get_camera_matrix);
 	ClassDB::bind_method(D_METHOD("get_distortion_coefficients"), &AprilTagDetector::get_distortion_coefficients);
+	ClassDB::bind_method(D_METHOD("get_current_frame_texture"), &AprilTagDetector::get_current_frame_texture);
+	ClassDB::bind_method(D_METHOD("set_video_feedback_enabled", "enabled"), &AprilTagDetector::set_video_feedback_enabled);
+	ClassDB::bind_method(D_METHOD("get_video_feedback_enabled"), &AprilTagDetector::get_video_feedback_enabled);
 }
 
-AprilTagDetector::AprilTagDetector() : is_initialized(false), marker_size(0.05), camera_running(false) {
+AprilTagDetector::AprilTagDetector() : is_initialized(false), marker_size(0.05), camera_running(false), video_feedback_enabled(false) {
 	UtilityFunctions::print("AprilTagDetector constructor called");
 	try {
 		aruco_dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_APRILTAG_36h11);
@@ -146,19 +156,25 @@ bool AprilTagDetector::initialize_camera() {
 	camera = camera_manager->get(cameraId);
 	camera->acquire();
 
-	// Configure camera - Match calibration parameters
-	std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration({ StreamRole::Viewfinder });
+	// Configure camera - Match Python configuration (but use R8 instead of YUV420)
+	std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration({ StreamRole::VideoRecording });
 	StreamConfiguration &streamConfig = config->at(0);
 
 	streamConfig.size.width = 1200;   // Match camera calibration parameters
 	streamConfig.size.height = 800;
-	streamConfig.pixelFormat = formats::R8; // 8-bit monochrome (same as working version)
+	streamConfig.pixelFormat = formats::R8; // 8-bit monochrome instead of YUV420
+	
+	// Note: Transform not available in this libcamera API version
 
 	CameraConfiguration::Status validation = config->validate();
 	if (validation == CameraConfiguration::Invalid) {
 		UtilityFunctions::print("Invalid camera configuration");
 		return false;
 	}
+	
+	// Log what the camera actually selected after validation
+	UtilityFunctions::print("Validated config: ", String::num_int64(streamConfig.size.width), "x", 
+		String::num_int64(streamConfig.size.height), " ", String(streamConfig.pixelFormat.toString().c_str()));
 
 	camera->configure(config.get());
 	
@@ -195,8 +211,7 @@ bool AprilTagDetector::initialize_camera() {
 			return false;
 		}
 
-		// Apply exposure control to each request
-		request->controls().set(controls::ExposureTime, 5000);
+		// Don't set controls per request - will set globally at start
 
 		requests.push_back(std::move(request));
 	}
@@ -209,6 +224,20 @@ bool AprilTagDetector::initialize_camera() {
 static void requestComplete(Request *request) {
 	if (request->status() == Request::RequestCancelled)
 		return;
+	
+	// Debug: Check if exposure control was applied
+	static bool exposure_logged = false;
+	if (!exposure_logged) {
+		const ControlList &metadata = request->metadata();
+		if (metadata.contains(controls::ExposureTime.id())) {
+			auto exposure_opt = metadata.get(controls::ExposureTime);
+			if (exposure_opt.has_value()) {
+				int32_t actual_exposure = exposure_opt.value();
+				UtilityFunctions::print("Actual applied ExposureTime: ", String::num_int64(actual_exposure));
+			}
+			exposure_logged = true;
+		}
+	}
 
 	const std::map<const Stream *, FrameBuffer *> &buffers = request->buffers();
 
@@ -229,7 +258,7 @@ static void requestComplete(Request *request) {
 			// Process frame for AprilTag detection
 			std::vector<AprilTagDetector::DetectionResult> results;
 			
-			// Create OpenCV Mat from libcamera frame data
+			// Create OpenCV Mat from libcamera frame data (original working version)
 			cv::Mat frame;
 			size_t expected_8bit = streamConfig.size.width * streamConfig.size.height;
 			size_t expected_16bit = expected_8bit * 2;
@@ -250,7 +279,10 @@ static void requestComplete(Request *request) {
 			if (!frame.empty() && AprilTagDetector::current_instance) {
 				AprilTagDetector* instance = AprilTagDetector::current_instance;
 				
-				// Process frame using the public method
+				// Store current frame for video feedback if enabled
+				instance->store_frame_for_video_feedback(frame);
+				
+				// Process every frame for AprilTag detection (no skipping)
 				std::vector<AprilTagDetector::DetectionResult> results;
 				instance->process_frame_for_detection(frame, results);
 				
@@ -278,13 +310,19 @@ bool AprilTagDetector::start_camera() {
 	// Connect signal and start camera
 	camera->requestCompleted.connect(requestComplete);
 
-	camera->start();
+	// Set controls like Python version does
+	ControlList controls_;
+	// controls_.set(controls::FrameDurationLimits, libcamera::Span<const std::int64_t, 2>({ 10000, 10000 })); // 100 FPS = 10ms frame duration
+	controls_.set(controls::ExposureTime, 9000);  // Match Python ExposureTime: 5000
+	
+	camera->start(&controls_);
+	UtilityFunctions::print("Camera started with 100 FPS, ExposureTime: 5000");
+	
 	for (std::unique_ptr<Request> &request : requests) {
 		camera->queueRequest(request.get());
 	}
 
 	camera_running = true;
-	UtilityFunctions::print("Camera started");
 	return true;
 }
 
@@ -426,8 +464,141 @@ void AprilTagDetector::process_frame_for_detection(cv::Mat& frame, std::vector<D
 	}
 }
 
+void AprilTagDetector::store_frame_for_video_feedback(cv::Mat& frame) {
+	if (video_feedback_enabled) {
+		// Only process video frames occasionally for performance
+		int video_count = video_frame_counter.fetch_add(1);
+		if (video_count % VIDEO_FRAME_SKIP == 0) {
+			std::lock_guard<std::mutex> lock(frame_mutex);
+			// Keep full frame for detection
+			current_frame = frame.clone();
+			// Create smaller version for video feedback
+			cv::resize(frame, video_frame_resized, 
+				cv::Size(VIDEO_WIDTH, VIDEO_HEIGHT), 
+				0, 0, cv::INTER_LINEAR);
+		}
+	}
+}
+
 void AprilTagDetector::requeue_request(libcamera::Request* request) {
 	if (camera && camera_running) {
 		camera->queueRequest(request);
 	}
+}
+
+void AprilTagDetector::adjust_camera_matrix_for_resolution(int actual_width, int actual_height, int calibration_width, int calibration_height) {
+	if (camera_matrix.empty()) return;
+	
+	// Scale the camera matrix for different resolution
+	double scale_x = (double)actual_width / calibration_width;
+	double scale_y = (double)actual_height / calibration_height;
+	
+	// Adjust focal lengths and principal point
+	camera_matrix.at<double>(0, 0) *= scale_x; // fx
+	camera_matrix.at<double>(1, 1) *= scale_y; // fy
+	camera_matrix.at<double>(0, 2) *= scale_x; // cx
+	camera_matrix.at<double>(1, 2) *= scale_y; // cy
+	
+	UtilityFunctions::print("Adjusted camera matrix for resolution ", 
+		String::num_int64(actual_width), "x", String::num_int64(actual_height),
+		" from calibration ", String::num_int64(calibration_width), "x", String::num_int64(calibration_height));
+}
+
+Ref<ImageTexture> AprilTagDetector::get_current_frame_texture() {
+	std::lock_guard<std::mutex> lock(frame_mutex);
+	
+	// Use the smaller resized frame for video feedback instead of full frame
+	if (video_frame_resized.empty()) {
+		return Ref<ImageTexture>();
+	}
+	
+	// Convert OpenCV Mat to Godot Image (using smaller frame)
+	int width = video_frame_resized.cols;
+	int height = video_frame_resized.rows;
+	
+	if (width <= 0 || height <= 0) {
+		UtilityFunctions::print("Invalid frame dimensions: ", String::num_int64(width), "x", String::num_int64(height));
+		return Ref<ImageTexture>();
+	}
+	
+	// Reuse cached byte array for better memory performance
+	if (cached_byte_array.size() != width * height * 3) {
+		cached_byte_array.resize(width * height * 3);
+	}
+	
+	if (video_frame_resized.channels() == 1) {
+		// Grayscale - convert to RGB for Godot
+		cv::Mat rgb_frame;
+		cv::cvtColor(video_frame_resized, rgb_frame, cv::COLOR_GRAY2RGB);
+		
+		// Ensure the frame is continuous in memory
+		if (!rgb_frame.isContinuous()) {
+			rgb_frame = rgb_frame.clone();
+		}
+		
+		memcpy(cached_byte_array.ptrw(), rgb_frame.data, width * height * 3);
+		
+		// Use the static create method from search results
+		Ref<Image> image = Image::create_from_data(width, height, false, Image::FORMAT_RGB8, cached_byte_array);
+		
+		// Validate image creation
+		if (image.is_null() || image->is_empty()) {
+			UtilityFunctions::print("Failed to create valid image from grayscale frame using static method");
+			UtilityFunctions::print("Frame info - width: ", String::num_int64(width), " height: ", String::num_int64(height), " data_size: ", String::num_int64(cached_byte_array.size()));
+			return Ref<ImageTexture>();
+		}
+		
+		// Reuse cached texture instead of creating new one
+		if (cached_texture.is_null()) {
+			cached_texture.instantiate();
+		}
+		cached_texture->set_image(image);
+		return cached_texture;
+	} else {
+		// Already RGB/BGR - need to handle BGR->RGB conversion
+		cv::Mat rgb_frame;
+		if (video_frame_resized.channels() == 3) {
+			cv::cvtColor(video_frame_resized, rgb_frame, cv::COLOR_BGR2RGB);
+		} else {
+			rgb_frame = video_frame_resized.clone();
+		}
+		
+		// Ensure the frame is continuous in memory
+		if (!rgb_frame.isContinuous()) {
+			rgb_frame = rgb_frame.clone();
+		}
+		
+		memcpy(cached_byte_array.ptrw(), rgb_frame.data, width * height * 3);
+		
+		// Use the static create method
+		Ref<Image> image = Image::create_from_data(width, height, false, Image::FORMAT_RGB8, cached_byte_array);
+		
+		// Validate image creation
+		if (image.is_null() || image->is_empty()) {
+			UtilityFunctions::print("Failed to create valid image from color frame using static method");
+			UtilityFunctions::print("Frame info - width: ", String::num_int64(width), " height: ", String::num_int64(height), " channels: ", String::num_int64(video_frame_resized.channels()), " data_size: ", String::num_int64(cached_byte_array.size()));
+			return Ref<ImageTexture>();
+		}
+		
+		// Reuse cached texture instead of creating new one
+		if (cached_texture.is_null()) {
+			cached_texture.instantiate();
+		}
+		cached_texture->set_image(image);
+		return cached_texture;
+	}
+}
+
+void AprilTagDetector::set_video_feedback_enabled(bool enabled) {
+	video_feedback_enabled = enabled;
+	if (!enabled) {
+		// Clear frames to free memory
+		std::lock_guard<std::mutex> lock(frame_mutex);
+		current_frame.release();
+		video_frame_resized.release();
+	}
+}
+
+bool AprilTagDetector::get_video_feedback_enabled() const {
+	return video_feedback_enabled;
 }

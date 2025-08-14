@@ -48,11 +48,31 @@ size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 18
 text = "Stop Camera"
 
+[node name="VideoToggleButton" type="Button" parent="VBoxContainer/ButtonContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+text = "Enable Video"
+
 [node name="HSeparator2" type="HSeparator" parent="VBoxContainer"]
 layout_mode = 2
 
-[node name="DetectionLabel" type="RichTextLabel" parent="VBoxContainer"]
+[node name="VideoContainer" type="HBoxContainer" parent="VBoxContainer"]
 layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VideoRect" type="TextureRect" parent="VBoxContainer/VideoContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+expand_mode = 1
+stretch_mode = 5
+
+[node name="VSeparator" type="VSeparator" parent="VBoxContainer/VideoContainer"]
+layout_mode = 2
+
+[node name="DetectionLabel" type="RichTextLabel" parent="VBoxContainer/VideoContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_font_sizes/mono_font_size = 12
 theme_override_font_sizes/normal_font_size = 14

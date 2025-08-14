@@ -9,6 +9,14 @@ bin/
 *.dll
 *.dylib
 
+# Godot-cpp build artifacts
+godot-cpp/bin/
+godot-cpp/**/*.o
+godot-cpp/**/*.os
+godot-cpp/**/*.a
+godot-cpp/gen/
+godot-cpp/.sconsign.dblite
+
 # SCons build files
 .sconsign.dblite
 .sconf_temp/
@@ -32,6 +40,11 @@ project/export_presets.cfg
 # Godot generated files
 project/*.uid
 project/bin/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
 
 # System files
 .DS_Store
