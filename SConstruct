@@ -1,64 +1,103 @@
 #!/usr/bin/env python
 import os
-import sys
+import subprocess
 
-from methods import print_error
+env = SConscript("godot-cpp/SConstruct")
 
+# For the reference:
+# - CCFLAGS are compilation flags shared between C and C++
+# - CFLAGS are for C-specific compilation flags
+# - CXXFLAGS are for C++-specific compilation flags
+# - CPPFLAGS are for pre-processor flags
+# - CPPDEFINES are for pre-processor defines
+# - LINKFLAGS are for linking flags
 
-libname = "EXTENSION-NAME"
-projectdir = "demo"
-
-localEnv = Environment(tools=["default"], PLATFORM="")
-
-# Build profiles can be used to decrease compile times.
-# You can either specify "disabled_classes", OR
-# explicitly specify "enabled_classes" which disables all other classes.
-# Modify the example file as needed and uncomment the line below or
-# manually specify the build_profile parameter when running SCons.
-
-# localEnv["build_profile"] = "build_profile.json"
-
-customs = ["custom.py"]
-customs = [os.path.abspath(path) for path in customs]
-
-opts = Variables(customs, ARGUMENTS)
-opts.Update(localEnv)
-
-Help(opts.GenerateHelpText(localEnv))
-
-env = localEnv.Clone()
-
-if not (os.path.isdir("godot-cpp") and os.listdir("godot-cpp")):
-    print_error("""godot-cpp is not available within this folder, as Git submodules haven't been initialized.
-Run the following command to download godot-cpp:
-
-    git submodule update --init --recursive""")
-    sys.exit(1)
-
-env = SConscript("godot-cpp/SConstruct", {"env": env, "customs": customs})
-
+# tweak this if you want to use different folders, or more folders, to store your source code in.
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 
-if env["target"] in ["editor", "template_debug"]:
+# Get OpenCV flags using pkg-config
+def get_opencv_flags():
     try:
-        doc_data = env.GodotCPPDocData("src/gen/doc_data.gen.cpp", source=Glob("doc_classes/*.xml"))
-        sources.append(doc_data)
-    except AttributeError:
-        print("Not including class reference as we're targeting a pre-4.3 baseline.")
+        # Get OpenCV compile flags
+        cflags_output = subprocess.check_output(['pkg-config', '--cflags', 'opencv4']).decode('utf-8').strip()
+        cflags = cflags_output.split()
+        
+        # Get OpenCV link flags  
+        libs_output = subprocess.check_output(['pkg-config', '--libs', 'opencv4']).decode('utf-8').strip()
+        libs = libs_output.split()
+        
+        return cflags, libs
+    except subprocess.CalledProcessError:
+        print("Error: pkg-config failed to find opencv4. Make sure OpenCV is properly installed.")
+        return [], []
 
-# .dev doesn't inhibit compatibility, so we don't need to key it.
-# .universal just means "compatible with all relevant arches" so we don't need to key it.
-suffix = env['suffix'].replace(".dev", "").replace(".universal", "")
+opencv_cflags, opencv_libs = get_opencv_flags()
 
-lib_filename = "{}{}{}{}".format(env.subst('$SHLIBPREFIX'), libname, suffix, env.subst('$SHLIBSUFFIX'))
+# Add OpenCV compile flags
+for flag in opencv_cflags:
+    if flag.startswith('-I'):
+        env.Append(CPPPATH=[flag[2:]])
+    else:
+        env.Append(CCFLAGS=[flag])
 
-library = env.SharedLibrary(
-    "bin/{}/{}".format(env['platform'], lib_filename),
-    source=sources,
-)
+# Add OpenCV link flags
+for flag in opencv_libs:
+    if flag.startswith('-l'):
+        env.Append(LIBS=[flag[2:]])
+    elif flag.startswith('-L'):
+        env.Append(LIBPATH=[flag[2:]])
+    else:
+        env.Append(LINKFLAGS=[flag])
 
-copy = env.Install("{}/bin/{}/".format(projectdir, env["platform"]), library)
+# Get libcamera flags using pkg-config
+def get_libcamera_flags():
+    try:
+        # Get libcamera compile flags
+        cflags_output = subprocess.check_output(['pkg-config', '--cflags', 'libcamera']).decode('utf-8').strip()
+        cflags = cflags_output.split()
+        
+        # Get libcamera link flags  
+        libs_output = subprocess.check_output(['pkg-config', '--libs', 'libcamera']).decode('utf-8').strip()
+        libs = libs_output.split()
+        
+        return cflags, libs
+    except subprocess.CalledProcessError:
+        print("Error: pkg-config failed to find libcamera. Make sure libcamera-dev is installed.")
+        return [], []
 
-default_args = [library, copy]
-Default(*default_args)
+libcamera_cflags, libcamera_libs = get_libcamera_flags()
+
+# Add libcamera compile flags
+for flag in libcamera_cflags:
+    if flag.startswith('-I'):
+        env.Append(CPPPATH=[flag[2:]])
+    else:
+        env.Append(CCFLAGS=[flag])
+
+# Add libcamera link flags
+for flag in libcamera_libs:
+    if flag.startswith('-l'):
+        env.Append(LIBS=[flag[2:]])
+    elif flag.startswith('-L'):
+        env.Append(LIBPATH=[flag[2:]])
+    else:
+        env.Append(LINKFLAGS=[flag])
+
+# Add C++17 standard (required for OpenCV) and enable exceptions
+env.Append(CXXFLAGS=['-std=c++17', '-fexceptions'])
+
+if env["platform"] == "macos":
+    library = env.SharedLibrary(
+        "project/bin/libapriltag.{}.{}.framework/libapriltag.{}.{}".format(
+            env["platform"], env["target"], env["platform"], env["target"]
+        ),
+        source=sources,
+    )
+else:
+    library = env.SharedLibrary(
+        "project/bin/libapriltag{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        source=sources,
+    )
+
+Default(library)

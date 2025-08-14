@@ -1,62 +1,87 @@
-# Godot auto generated files
-*.gen.*
-.godot/
-
-# Ignore library files but not the gdextension file
-demo/bin/*
-!demo/bin/android
-demo/bin/android/*
-!demo/bin/android/.gitkeep
-!demo/bin/linux
-demo/bin/linux/*
-!demo/bin/linux/.gitkeep
-!demo/bin/macos
-demo/bin/macos/*
-!demo/bin/macos/.gitkeep
-!demo/bin/windows
-demo/bin/windows/*
-!demo/bin/windows/.gitkeep
-!demo/bin/*.gdextension
-.sconsign*.dblite
-
-# Ignore custom.py
-custom.py
-
-# Ignore generated compile_commands.json
-compile_commands.json
-
-# Ignore files generated for documentation
-/src/gen
-
-# Binaries
+# Build artifacts
+build/
+bin/
 *.o
 *.os
 *.so
-*.obj
-*.bc
-*.pyc
-*.dblite
-*.pdb
+*.a
 *.lib
-*.config
-*.creator
-*.creator.user
-*.files
-*.includes
-*.idb
-*.exp
+*.dll
+*.dylib
 
-# Other stuff
-*.log
+# SCons build files
+.sconsign.dblite
+.sconf_temp/
+config.log
 
-# VSCode
-.vscode/*
-!.vscode/extensions.json
+# Compiled object files
+*.obj
+*.elf
+
+# Debug files
+*.pdb
+*.ilk
+
+# Godot specific
+project/.godot/
+project/.import/
+project/export_presets.cfg
+*.tmp
+*.remap
+
+# Godot generated files
+project/*.uid
+project/bin/
+
+# System files
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Jetbrains
+# IDE/Editor files
+.vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Cmake
-cmake-build*
-CMakeUserPresets.json
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Log files
+*.log
+hailort.log
+gstshark_*/
+
+# Test executables and outputs
+apriltag_detector
+test_*
+!test_*.cpp
+!test_*.gd
+
+# Image files (test outputs)
+test.jpg
+test.png
+*.debug.jpg
+*.debug.png
+
+# Cache files
+*.cache
+
+# OS generated files
+.Trashes
+.Spotlight-V100
+.fseventsd
+
+# Development tools
+compile_commands.json
+.clangd/
+.ccls-cache/
+
+# GDExtension specific
+project/bin/*.so
+project/bin/*.dll
+project/bin/*.dylib

@@ -10,6 +10,12 @@ config_version=5
 
 [application]
 
-config/name="godot cpp template"
-config/features=PackedStringArray("4.1", "Forward Plus")
-config/icon="res://icon.svg"
+config/name="AprilTag Detection"
+config/description="Real-time AprilTag detection using libcamera"
+run/main_scene="uid://cjq6dc78rwweq"
+config/features=PackedStringArray("4.4")
+config/icon="res://icon.png"
+
+[rendering]
+
+renderer/rendering_method="mobile"
