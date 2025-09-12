@@ -1,3 +1,4 @@
+# This goes in your existing main.gd file
 extends Control
 
 @onready var start_button = $VBoxContainer/ButtonContainer/StartButton
@@ -7,6 +8,8 @@ extends Control
 @onready var detection_label = $VBoxContainer/VideoContainer/DetectionLabel
 
 @onready var apriltag_detector: AprilTagDetector
+@onready var marker_tracker: MarkerTracker  # Our new tracker
+
 var is_running = false
 var video_enabled = false
 
@@ -16,11 +19,18 @@ var fps_timer = 0.0
 var current_fps = 0.0
 var last_fps_update = 0.0
 
+# Current tracked position
+var current_position: Vector3 = Vector3.ZERO
+
 func _ready():
+	print('Camera system initializing...')
 	
-	print('hello there')
-	# Initialize the AprilTag detector
+	# Initialize the AprilTag detector (your C++ extension)
 	apriltag_detector = AprilTagDetector.new()
+	
+	# Initialize our marker tracker (our new GDScript class)
+	marker_tracker = MarkerTracker.new()
+	add_child(marker_tracker)  # Only add MarkerTracker as child
 	
 	# Load camera parameters using absolute path
 	var json_path = "/home/sujith/Documents/games/gdlibcam/project/camera_parameters.json"
@@ -54,6 +64,9 @@ func _on_start_pressed():
 			video_toggle_button.disabled = false
 			detection_label.text = "Camera started. Looking for AprilTags..."
 			
+			# Start recording (you can change patient ID as needed)
+			marker_tracker.start_recording("PATIENT_001")
+			
 			# Reset FPS tracking
 			frame_count = 0
 			fps_timer = 0.0
@@ -66,10 +79,13 @@ func _on_start_pressed():
 func _on_stop_pressed():
 	if is_running:
 		apriltag_detector.stop_camera()
+		marker_tracker.stop_recording()  # Stop data recording
+		
 		is_running = false
 		start_button.disabled = false
 		stop_button.disabled = true
 		video_toggle_button.disabled = true
+		
 		# Disable video feedback when camera stops
 		if video_enabled:
 			_on_video_toggle_pressed()
@@ -89,6 +105,9 @@ func _process(_delta):
 			fps_timer = 0.0
 			last_fps_update = Time.get_ticks_msec() / 1000.0
 		
+		# Process marker detection and tracking
+		process_marker_tracking()
+		
 		# Only update UI every 5th frame to reduce overhead
 		if frame_count % 5 == 0:
 			update_detection_display()
@@ -97,11 +116,28 @@ func _process(_delta):
 		if video_enabled and frame_count % 15 == 0:  # Only update every 15th frame (~4 FPS for video)
 			update_video_display()
 
+func process_marker_tracking():
+	# Get detections from C++ extension
+	var detections = apriltag_detector.get_latest_detections()
+	
+	# Process through our marker tracker to get filtered position
+	current_position = marker_tracker.process_detections(detections)
+	
+	# Here you can use current_position for your games/applications
+	# This replaces the UDP communication from your original system
+	update_global_position()
+
+func update_global_position():
+	# Update your global script with the new position
+	# This replaces the network communication from your original system
+	GlobalSignals.update_marker_positions(current_position)
+
 func update_detection_display():
 	# Get latest detections from the detector
 	var detections = apriltag_detector.get_latest_detections()
 	
-	var text = "FPS: %.1f\n\n" % current_fps
+	var text = "FPS: %.1f\n" % current_fps
+	text += "Filtered Position: [%.3f, %.3f, %.3f]\n\n" % [current_position.x, current_position.y, current_position.z]
 	
 	if detections.size() > 0:
 		text += "Detected " + str(detections.size()) + " marker(s):\n"
@@ -147,3 +183,14 @@ func _exit_tree():
 	# Clean up when exiting
 	if apriltag_detector and is_running:
 		apriltag_detector.stop_camera()
+	if marker_tracker:
+		marker_tracker.stop_recording()
+
+# Additional functions for integration with your games
+func reset_tracking():
+	marker_tracker.reset_tracking()
+	current_position = Vector3.ZERO
+
+func change_patient(patient_id: String):
+	marker_tracker.stop_recording()
+	marker_tracker.start_recording(patient_id)
